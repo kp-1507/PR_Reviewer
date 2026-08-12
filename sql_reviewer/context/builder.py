@@ -28,14 +28,9 @@ class ContextBuilder:
             f"Total Analyzed SQL Cells: {len(sql_cells)}",
             f"Total Deterministic Violations: {len(violations)}",
             "",
-            "--- ACTIVE CODING STANDARDS & PERFORMANCE RULES ---",
-            "RULE-001: All SQL keywords MUST be uppercase (e.g., SELECT, FROM, WHERE, JOIN, GROUP BY, ORDER BY, HAVING, WITH, AS).",
-            "RULE-002: Calculated and aggregated expressions MUST have explicit aliases (e.g., SUM(amount) AS total_amount).",
-            "RULE-003: Avoid SELECT * on catalog/delta tables; specify explicit column lists.",
-            "RULE-004: Preserve Delta Lake Predicate Pushdown; avoid function calls on filter columns in WHERE clauses.",
-            "RULE-005: Use WHERE for filtering before aggregation rather than HAVING.",
-            "RULE-006: Prefer WITH clause Common Table Expressions (CTEs) over complex nested subqueries.",
-            "RULE-007: Prohibit abbreviated/short-form column aliases and identifiers (e.g., use 'amount' instead of 'amt', 'transaction' instead of 'txn', 'customer' instead of 'cust', 'quantity' instead of 'qty').",
+            "--- ACTIVE CODING STANDARDS RULES ---",
+            "RULE-001: All SQL keywords MUST be uppercase (e.g., SELECT, FROM, WHERE, JOIN, GROUP BY, ORDER BY, HAVING, USE, CATALOG, SCHEMA).",
+            "RULE-002: Prohibit abbreviated/short-form column aliases and identifiers (e.g., use 'amount' instead of 'amt', 'transaction' instead of 'txn', 'customer' instead of 'cust', 'quantity' instead of 'qty', 'date' instead of 'dt').",
             ""
         ]
 

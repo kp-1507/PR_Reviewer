@@ -32,29 +32,22 @@ class LLMReviewer:
 
             prompt = (
                 "You are an expert Senior Databricks SQL Code Reviewer.\n"
-                "Your role is to perform a high-precision, professional review of the provided Databricks SQL code cells.\n\n"
-                "INSTRUCTIONS FOR DETERMINISTIC FINDINGS:\n"
-                "The context provided includes pre-computed deterministic violations (e.g., RULE-001 Keyword Uppercase). You MUST NOT re-evaluate these rules yourself. Simply incorporate these pre-computed findings accurately into your final report's Rule Violations Breakdown.\n\n"
-                "SEMANTIC REVIEW CHECKLIST & RULES TO EVALUATE (You must evaluate these yourself):\n"
-                "1. RULE-002 (Explicit Column Aliasing): Flag calculated or aggregated expressions (e.g., COUNT(*), SUM(col), DATE_FORMAT(...)) that lack an explicit AS alias.\n"
-                "3. RULE-003 (Avoid SELECT *): Flag SELECT * on Delta/catalog tables. Explain memory waste and columnar storage scanning penalties.\n"
-                "4. RULE-004 (Delta Lake Predicate Pushdown): Flag functions applied directly to filter columns in WHERE clauses (e.g. WHERE date_format(col, 'yyyy') = '2026') because they disable Delta Lake file pruning and metadata skipping; recommend SARGable range predicates (e.g. WHERE col >= '2026-01-01').\n"
-                "5. RULE-005 (Join & Aggregation Efficiency): Flag implicit cross joins, filtering in HAVING instead of WHERE, or unoptimized subqueries.\n"
-                "6. RULE-006 (CTE Readability): Encourage WITH clause Common Table Expressions (CTEs) over deeply nested inline subqueries.\n"
-                "7. RULE-007 (Descriptive Naming / No Short-Forms): Flag cryptic short-form abbreviations in column aliases and identifiers (e.g., amt -> amount, txn -> transaction, cust -> customer, qty -> quantity, dt -> date). Require clear, full-word descriptive names for readability.\n\n"
-                "REQUIRED RESPONSE STRUCTURE:\n"
-                "### 1. Executive Summary & Health Score\n"
-                "Provide a concise evaluation of overall notebook SQL quality, security, and rule adherence.\n\n"
-                "### 2. Rule Violations Breakdown\n"
-                "Cell-by-cell breakdown referencing Cell ID, line number, Rule ID, and detected issue.\n\n"
-                "### 3. Databricks & Delta Lake Performance Coaching\n"
-                "Explain Delta Lake predicate pushdown, file pruning, and columnar storage impacts for any identified performance anti-patterns.\n\n"
-                "### 4. Actionable Recommendations\n"
-                "Provide clear, concise guidance for developer resolution.\n\n"
-                "CRITICAL INSTRUCTION: Do NOT output full rewritten SQL queries or complete code fixes.\n\n"
+                "Your role is to HIGHLIGHT ERRORS AND VIOLATIONS ONLY in a clean, concise bulleted list.\n"
+                "DO NOT write long multi-paragraph explanations, background tutorials, or performance coaching essays.\n\n"
+                "RULES TO EVALUATE (ONLY CHECK THESE TWO RULES):\n"
+                "1. RULE-001 (Keyword Uppercase): Flag any SQL keywords (e.g., select, from, where, join, group by, order by, use, catalog, schema) written in lowercase or mixed-case.\n"
+                "2. RULE-002 (Descriptive Naming / No Cryptic Short-Forms): Flag short-form or cryptic abbreviations in column aliases and identifiers (e.g., cust, amt, txn, qty, cnt, dt). Require full, descriptive names (e.g., customer, amount, transaction, quantity, count, date).\n\n"
+                "CRITICAL OUTPUT FORMAT REQUIREMENTS:\n"
+                "- Output ONLY cell-by-cell error highlights.\n"
+                "- Use this exact format per cell:\n"
+                "  📍 Cell #[Cell Number]\n"
+                "  • [RULE-ID] Title: Direct 1-line description of the error.\n"
+                "    Target Snippet: `<problematic sql snippet>`\n"
+                "- If a cell has no violations for these two rules, do NOT list that cell.\n"
+                "- Do NOT output full rewritten SQL queries.\n"
+                "- Do NOT include executive summaries or long narrative paragraphs.\n\n"
                 f"{context}"
             )
-
             response = client.models.generate_content(
                 model=self.model_name,
                 contents=prompt

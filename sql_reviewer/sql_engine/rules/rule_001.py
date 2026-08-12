@@ -11,9 +11,17 @@ class Rule001KeywordsUppercase(BaseRule):
     Differentiates keywords from string literals, comments, identifiers, table names, and column names.
     """
 
+    DATABRICKS_ADDITIONAL_KEYWORDS = {
+        "CATALOG", "CATALOGS", "SCHEMA", "SCHEMAS", "DATABASE", "DATABASES",
+        "TABLE", "TABLES", "VIEW", "VIEWS", "FUNCTION", "FUNCTIONS",
+        "USE", "SET", "UNSET", "SHOW", "DESCRIBE", "EXPLAIN", "GRANT", "REVOKE",
+        "OPTIMIZE", "VACUUM", "ZORDER", "BY", "CLUSTER", "CLUSTERED",
+        "LOCATION", "FORMAT", "USING", "OPTIONS", "TBLPROPERTIES",
+        "PARTITIONED", "MERGE", "INTO", "MATCHED", "THEN", "WHEN",
+        "UPDATE", "DELETE", "INSERT", "OVERWRITE", "TRUNCATE", "REORG"
+    }
+
     NON_KEYWORD_TYPES = {
-        TokenType.VAR,
-        TokenType.IDENTIFIER,
         TokenType.STRING,
         TokenType.RAW_STRING,
         TokenType.HEREDOC_STRING,
@@ -21,6 +29,8 @@ class Rule001KeywordsUppercase(BaseRule):
         TokenType.HEX_STRING,
         TokenType.BYTE_STRING,
         TokenType.BIT_STRING,
+        TokenType.COMMENT,
+        TokenType.IDENTIFIER,
         TokenType.NUMBER,
         TokenType.INT,
         TokenType.FLOAT,
@@ -39,7 +49,6 @@ class Rule001KeywordsUppercase(BaseRule):
         TokenType.SLASH,
         TokenType.COLON,
         TokenType.AMP,
-        TokenType.COMMENT,
     }
 
     def __init__(self):
@@ -49,6 +58,7 @@ class Rule001KeywordsUppercase(BaseRule):
         )
         self.dialect = Dialect.get("databricks")()
         self.tokenizer = self.dialect.Tokenizer()
+        self.all_keywords = set(self.tokenizer.KEYWORDS.keys()) | self.DATABRICKS_ADDITIONAL_KEYWORDS
 
     def evaluate(self, sql_cell: Dict[str, Any], ast_result: Dict[str, Any]) -> List[Dict[str, Any]]:
         violations: List[Dict[str, Any]] = []
@@ -66,24 +76,28 @@ class Rule001KeywordsUppercase(BaseRule):
             return violations
 
         for token in tokens:
-            text = token.text
-            if not text:
+            if not token.text:
                 continue
 
-            text_upper = text.upper()
-            is_in_kw_dict = text_upper in self.tokenizer.KEYWORDS
+            if token.token_type in self.NON_KEYWORD_TYPES:
+                continue
 
-            # Check if token is a true keyword
-            if token.token_type not in self.NON_KEYWORD_TYPES and is_in_kw_dict:
-                if text != text_upper:
+            # Extract the raw source text to preserve original casing of compound keywords (like "order by")
+            raw_text = sql_content[token.start : token.end + 1]
+            text_upper = raw_text.upper()
+
+            if text_upper in self.all_keywords:
+                if raw_text != text_upper:
                     line_no = token.line + line_offset
                     violations.append({
                         "rule_id": self.rule_id,
                         "cell_id": cell_id,
                         "line": line_no,
-                        "current": text,
+                        "current": raw_text,
                         "expected": text_upper,
-                        "message": f"SQL keyword '{text}' must be uppercase ('{text_upper}')"
+                        "message": f"SQL keyword '{raw_text}' must be uppercase ('{text_upper}')"
                     })
 
         return violations
+
+

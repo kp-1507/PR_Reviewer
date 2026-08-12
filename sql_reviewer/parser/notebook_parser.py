@@ -98,7 +98,7 @@ class NotebookParser:
             if is_sql_cell and cleaned_sql.strip():
                 sql_cell_count += 1
                 cell_obj = SQLCell(
-                    cell_id=sql_cell_count,
+                    cell_id=idx,
                     notebook_id=self.notebook_id,
                     sql_content=cleaned_sql,
                     original_source=source_text,
@@ -107,3 +107,4 @@ class NotebookParser:
                 sql_cells.append(cell_obj.to_dict())
 
         return sql_cells
+
