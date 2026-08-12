@@ -9,3 +9,4 @@ langchain
 httpx
 google-genai
 sqlglot
+requests
