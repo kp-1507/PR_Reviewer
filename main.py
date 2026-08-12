@@ -62,12 +62,12 @@ async def github_webhook(request: Request):
         headers=headers,
         params=params
         )
-        print("Content API Status:", content_response.status_code)
+        # print("Content API Status:", content_response.status_code)
 
         content_data = content_response.json()
 
-        print("FULL FILE:")
-        print(content_data)
+        # print("FULL FILE:")
+        # print(content_data)
 
         # print("\n====================")
         # print("File:", file["filename"])
