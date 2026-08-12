@@ -3,4 +3,4 @@ uvicorn
 python-dotenv
 ngrok
 pyngrok
-
+requests
