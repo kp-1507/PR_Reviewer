@@ -3,4 +3,9 @@ uvicorn
 python-dotenv
 ngrok
 pyngrok
-
+langgraph
+langchain-core
+langchain
+httpx
+google-genai
+sqlglot
