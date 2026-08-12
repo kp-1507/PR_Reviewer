@@ -1,3 +1,3 @@
 
-SELECT CUSTOMER_ID,phone_number
+SELECT CUSTOMER_ID,phone_number, address
 FROM CUSTOMER_ORDERS;
