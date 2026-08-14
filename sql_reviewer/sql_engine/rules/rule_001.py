@@ -18,7 +18,8 @@ class Rule001KeywordsUppercase(BaseRule):
         "OPTIMIZE", "VACUUM", "ZORDER", "BY", "CLUSTER", "CLUSTERED",
         "LOCATION", "FORMAT", "USING", "OPTIONS", "TBLPROPERTIES",
         "PARTITIONED", "MERGE", "INTO", "MATCHED", "THEN", "WHEN",
-        "UPDATE", "DELETE", "INSERT", "OVERWRITE", "TRUNCATE", "REORG"
+        "UPDATE", "DELETE", "INSERT", "OVERWRITE", "TRUNCATE", "REORG",
+        "STREAMING", "WATERMARK", "DELAY", "OF"
     }
 
     NON_KEYWORD_TYPES = {

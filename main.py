@@ -82,10 +82,19 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str)
                         print("\n🔍 SEMANTIC & PERFORMANCE FINDINGS (LLM):")
                         print(llm_review)
 
+                        # Post review report to the GitHub PR
+                        review_url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
+                        review_payload = {
+                            "body": f"### 📊 SQL Code Review Report for `{filename}`\n\n{llm_review}",
+                            "event": "COMMENT"
+                        }
+                        post_response = requests.post(review_url, headers=headers, json=review_payload)
+                        print(f"Posted review to PR. Status code: {post_response.status_code}")
+
                     print("\n==================================================\n")
                 except Exception as e:
                     print(f"Error parsing or reviewing notebook {filename}: {e}")
-
+                    
 
 @app.post("/webhook/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
