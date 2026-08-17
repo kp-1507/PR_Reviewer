@@ -10,6 +10,7 @@ import langchain
 from langgraph.graph import StateGraph, START, END
 
 from sql_reviewer.parser.notebook_parser import NotebookParser
+from sql_reviewer.parser.python_parser import PythonParser
 from sql_reviewer.sql_engine.parser import SQLParser
 from sql_reviewer.sql_engine.engine import RuleEngine
 from sql_reviewer.context.builder import ContextBuilder
@@ -17,9 +18,21 @@ from sql_reviewer.llm.reviewer import LLMReviewer
 from sql_reviewer.graph.state import ReviewState
 
 
+def get_parser(notebook_input: Any):
+    path = ""
+    if isinstance(notebook_input, str):
+        path = notebook_input
+    elif isinstance(notebook_input, dict):
+        path = notebook_input.get("path", "")
+        
+    if path.endswith(".py"):
+        return PythonParser(notebook_input)
+    return NotebookParser(notebook_input)
+
+
 def extract_sql_func(state: ReviewState) -> Dict[str, Any]:
     notebook_input = state["notebook"]
-    parser = NotebookParser(notebook_input)
+    parser = get_parser(notebook_input)
     sql_cells = parser.extract_sql_cells()
     return {"sql_cells": sql_cells}
 
@@ -41,11 +54,8 @@ def evaluate_rules_func(state: ReviewState) -> Dict[str, Any]:
 
 def build_context_func(state: ReviewState) -> Dict[str, Any]:
     notebook_input = state["notebook"]
-    notebook_id = (
-        NotebookParser(notebook_input).notebook_id
-        if isinstance(notebook_input, (str, dict))
-        else "notebook.ipynb"
-    )
+    parser = get_parser(notebook_input)
+    notebook_id = parser.notebook_id
     sql_cells = state.get("sql_cells", [])
     ast_results = state.get("ast_results", [])
     violations = state.get("violations", [])
@@ -78,11 +88,8 @@ def llm_review_func(state: ReviewState) -> Dict[str, Any]:
 
 def final_result_func(state: ReviewState) -> Dict[str, Any]:
     notebook_input = state["notebook"]
-    notebook_id = (
-        NotebookParser(notebook_input).notebook_id
-        if isinstance(notebook_input, (str, dict))
-        else "notebook.ipynb"
-    )
+    parser = get_parser(notebook_input)
+    notebook_id = parser.notebook_id
     sql_cells = state.get("sql_cells", [])
     ast_results = state.get("ast_results", [])
     violations = state.get("violations", [])

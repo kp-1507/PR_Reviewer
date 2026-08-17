@@ -1,6 +1,6 @@
 # Databricks SQL Code Review Agent
 
-An automated SQL Code Review Agent built using **LangGraph**, **sqlglot**, and **Gemini LLM** to enforce SQL coding standards, verify syntactical correctness (AST parsing), and check identifier formatting standards for Databricks SQL notebooks.
+An automated SQL Code Review Agent built using **LangGraph**, **sqlglot**, and **Gemini LLM** to enforce SQL coding standards, verify syntactical correctness (AST parsing), and check identifier formatting standards for Databricks SQL notebooks (`.ipynb`) and standalone Python scripts (`.py`).
 
 ---
 
@@ -10,7 +10,7 @@ The code review process runs as a state machine using LangGraph:
 
 ```mermaid
 graph TD
-    A[Input Notebook] --> B(1. Extract SQL Cells)
+    A[Input Notebook / Python Script] --> B(1. Extract SQL Statements)
     B --> C(2. Parse SQL AST)
     C --> D(3. Evaluate Static Rules)
     D --> E(4. Build Context Payload)
@@ -21,6 +21,10 @@ graph TD
     H --> I
     I --> J[Terminal Output]
 ```
+
+### SQL Extraction Strategy
+- **SQL Notebook Cells**: Extracts queries from `%sql` code cells or default SQL cells.
+- **PySpark Code (Python Files & Cells)**: Analyzes the Abstract Syntax Tree (AST) of the Python code using the standard `ast` module to detect and extract SQL queries passed to `spark.sql(...)` calls. Handles static strings, f-strings (substituting dynamic values with wildcards), and local variable references.
 
 ---
 
@@ -56,13 +60,16 @@ GITHUB_TOKEN=your_github_pat_token_here
 ```
 
 ### 4. Running Locally (CLI Mode)
-To review a local Databricks notebook:
+To review a local Databricks notebook or PySpark script:
 ```bash
 # Run on the default sample notebook
 python3 cli.py
 
-# Run on a custom local notebook
+# Run on a custom local notebook (.ipynb)
 python3 cli.py path/to/your/notebook.ipynb
+
+# Run on a custom local python script (.py)
+python3 cli.py path/to/your/script.py
 ```
 
 ---

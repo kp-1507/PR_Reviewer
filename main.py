@@ -55,27 +55,38 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str)
             encoded_content = content_data["content"]
             full_content = base64.b64decode(encoded_content).decode("utf-8")
 
-            if filename.endswith(".ipynb"):
+            if filename.endswith((".ipynb", ".py")):
                 try:
-                    notebook_dict = json.loads(full_content)
-                    notebook_dict["path"] = filename
+                    input_payload = None
+                    if filename.endswith(".ipynb"):
+                        notebook_dict = json.loads(full_content)
+                        notebook_dict["path"] = filename
+                        input_payload = notebook_dict
+                    else:
+                        input_payload = {"path": filename, "content": full_content}
 
                     print(f"\n==================================================")
                     print(f"🚀 RUNNING SQL REVIEW WORKFLOW FOR: {filename}")
                     print(f"==================================================")
 
-                    review_result = run_sql_review(notebook_dict)
+                    review_result = run_sql_review(input_payload)
+
+                    unit_label = "SQL Queries" if filename.endswith(".py") else "SQL Cells"
 
                     print("\n==================================================")
                     print(f"📊 REVIEW SUMMARY: {filename}")
-                    print(f"SQL Cells: {review_result.get('total_sql_cells')} | AST Errors: {review_result.get('total_ast_parse_errors')} | Rule Violations: {review_result.get('total_violations')}")
+                    print(f"{unit_label}: {review_result.get('total_sql_cells')} | AST Errors: {review_result.get('total_ast_parse_errors')} | Rule Violations: {review_result.get('total_violations')}")
                     print("==================================================")
 
                     violations = review_result.get("violations", [])
                     if violations:
                         print("\n🔴 DETERMINISTIC KEYWORD & AST VIOLATIONS:")
                         for v in violations:
-                            print(f"  • Cell #{v.get('cell_id')} Line {v.get('line')}: [{v.get('rule_id')}] Keyword '{v.get('current')}' must be uppercase ('{v.get('expected')}')")
+                            if filename.endswith(".py"):
+                                cell_label = f"Line {v.get('line')}"
+                            else:
+                                cell_label = f"Cell #{v.get('cell_id')} Line {v.get('line')}"
+                            print(f"  • {cell_label}: [{v.get('rule_id')}] Keyword '{v.get('current')}' must be uppercase ('{v.get('expected')}')")
 
                     llm_review = review_result.get("llm_review")
                     if llm_review:
@@ -93,7 +104,7 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str)
 
                     print("\n==================================================\n")
                 except Exception as e:
-                    print(f"Error parsing or reviewing notebook {filename}: {e}")
+                    print(f"Error parsing or reviewing file {filename}: {e}")
                     
 
 @app.post("/webhook/github")

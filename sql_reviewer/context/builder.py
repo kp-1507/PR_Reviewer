@@ -34,16 +34,25 @@ class ContextBuilder:
             ""
         ]
 
+        is_python_file = notebook_id.endswith(".py")
+
         for cell in sql_cells:
             cell_id = cell["cell_id"]
-            sql_text = cell["sql_content"].strip()
             ast_res = ast_map.get(cell_id, {})
             cell_violations = violations_by_cell.get(cell_id, [])
             parse_error = ast_res.get("error")
 
-            lines.append(f"--- CELL #{cell_id} ---")
+            if is_python_file:
+                lines.append(f"--- FILE: {notebook_id} Line {cell_id} ---")
+            else:
+                lines.append(f"--- CELL #{cell_id} ---")
             lines.append("SQL Code:")
-            lines.append(sql_text)
+            
+            # Split and prefix each line with its absolute line number
+            sql_lines = cell["sql_content"].splitlines()
+            for line_idx, line in enumerate(sql_lines):
+                abs_line = line_idx + 1 + cell.get("line_offset", 0)
+                lines.append(f"[Line {abs_line}] {line}")
             lines.append("")
 
             if parse_error:

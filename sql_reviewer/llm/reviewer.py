@@ -23,12 +23,37 @@ class LLMReviewer:
         load_dotenv()
         api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
+        is_python_file = False
+        for line in context.splitlines()[:5]:
+            if "Notebook ID:" in line and line.strip().endswith(".py"):
+                is_python_file = True
+                break
+
         if not api_key or "your_" in api_key.lower() or "placeholder" in api_key.lower():
-            return self._generate_fallback_review(context, violations, reason="GEMINI_API_KEY not configured.")
+            return self._generate_fallback_review(context, violations, reason="GEMINI_API_KEY not configured.", is_python_file=is_python_file)
 
         try:
             from google import genai
             client = genai.Client(api_key=api_key)
+
+            if is_python_file:
+                format_requirements = (
+                    "- Output ONLY line-by-line error highlights.\n"
+                    "- Use this exact format per query:\n"
+                    "  📍 Line [Line Number]\n"
+                    "  • [RULE-ID] Title: Direct 1-line description of the error.\n"
+                    "    Target Snippet: `<problematic sql snippet>`\n"
+                    "- If a line has no violations for these two rules, do NOT list that line."
+                )
+            else:
+                format_requirements = (
+                    "- Output ONLY cell-by-cell error highlights.\n"
+                    "- Use this exact format per cell:\n"
+                    "  📍 Cell #[Cell Number] Line [Line Number]\n"
+                    "  • [RULE-ID] Title: Direct 1-line description of the error.\n"
+                    "    Target Snippet: `<problematic sql snippet>`\n"
+                    "- If a cell has no violations for these two rules, do NOT list that cell."
+                )
 
             prompt = (
                 "You are an expert Senior Databricks SQL Code Reviewer.\n"
@@ -38,12 +63,8 @@ class LLMReviewer:
                 "1. RULE-001 (Keyword Uppercase): Flag any SQL keywords (e.g., select, from, where, join, group by, order by, use, catalog, schema) written in lowercase or mixed-case.\n"
                 "2. RULE-002 (Descriptive Naming / No Cryptic Short-Forms): Flag short-form or cryptic abbreviations in column aliases and identifiers (e.g., cust, amt, txn, qty, cnt, dt). Require full, descriptive names (e.g., customer, amount, transaction, quantity, count, date).\n\n"
                 "CRITICAL OUTPUT FORMAT REQUIREMENTS:\n"
-                "- Output ONLY cell-by-cell error highlights.\n"
-                "- Use this exact format per cell:\n"
-                "  📍 Cell #[Cell Number]\n"
-                "  • [RULE-ID] Title: Direct 1-line description of the error.\n"
-                "    Target Snippet: `<problematic sql snippet>`\n"
-                "- If a cell has no violations for these two rules, do NOT list that cell.\n"
+                "The SQL Code lines provided in the context are prefixed with `[Line X]`. Use these prefixes to determine the exact absolute line number for any violation. Do not guess or do math.\n"
+                f"{format_requirements}\n"
                 "- Do NOT output full rewritten SQL queries.\n"
                 "- Do NOT include executive summaries or long narrative paragraphs.\n\n"
                 f"{context}"
@@ -55,16 +76,17 @@ class LLMReviewer:
             if response and response.text:
                 return response.text.strip()
             else:
-                return self._generate_fallback_review(context, violations, reason="Empty response from LLM.")
+                return self._generate_fallback_review(context, violations, reason="Empty response from LLM.", is_python_file=is_python_file)
 
         except Exception as e:
-            return self._generate_fallback_review(context, violations, reason=f"LLM execution error: {str(e)}")
+            return self._generate_fallback_review(context, violations, reason=f"LLM execution error: {str(e)}", is_python_file=is_python_file)
 
     def _generate_fallback_review(
         self,
         context: str,
         violations: List[Dict[str, Any]],
-        reason: str = ""
+        reason: str = "",
+        is_python_file: bool = False
     ) -> str:
         lines = [
             "=== AUTOMATED DETERMINISTIC SQL REVIEW SUMMARY ===",
@@ -74,15 +96,23 @@ class LLMReviewer:
         ]
 
         if not violations:
-            lines.append("All analyzed SQL cells passed rule evaluation. No keyword casing violations found.")
+            unit = "queries" if is_python_file else "cells"
+            lines.append(f"All analyzed SQL {unit} passed rule evaluation. No keyword casing violations found.")
         else:
             lines.append("Violations Breakdown (RULE-001: Keywords Must Be Uppercase):")
             for idx, v in enumerate(violations, start=1):
-                lines.append(
-                    f"  {idx}. Cell #{v['cell_id']} Line {v['line']}: "
-                    f"Keyword '{v['current']}' -> Expected '{v['expected']}'"
-                )
+                if is_python_file:
+                    lines.append(
+                        f"  {idx}. Line {v['line']}: "
+                        f"Keyword '{v['current']}' -> Expected '{v['expected']}'"
+                    )
+                else:
+                    lines.append(
+                        f"  {idx}. Cell #{v['cell_id']} Line {v['line']}: "
+                        f"Keyword '{v['current']}' -> Expected '{v['expected']}'"
+                    )
             lines.append("")
-            lines.append("Recommendation: Update lowercase/mixed-case SQL keywords to uppercase to adhere to Databricks SQL coding standards.")
+            unit_recom = "queries" if is_python_file else "keywords"
+            lines.append(f"Recommendation: Update lowercase/mixed-case SQL {unit_recom} to uppercase to adhere to Databricks SQL coding standards.")
 
         return "\n".join(lines).strip()

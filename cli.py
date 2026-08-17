@@ -12,28 +12,32 @@ from sql_reviewer.graph.workflow import run_sql_review
 def main():
     parser = argparse.ArgumentParser(description="Databricks SQL Code Review Agent (V1)")
     parser.add_argument(
-        "notebook",
+        "file_path",
         nargs="?",
         default="notebooks/sample_databricks_notebook.ipynb",
-        help="Path to the Databricks .ipynb notebook file (default: notebooks/sample_databricks_notebook.ipynb)"
+        help="Path to the Databricks .ipynb notebook file or .py python script (default: notebooks/sample_databricks_notebook.ipynb)"
     )
     args = parser.parse_args()
 
-    notebook_path = os.path.abspath(args.notebook)
-    if not os.path.exists(notebook_path):
-        print(f"Error: Notebook file not found at '{notebook_path}'")
+    input_path = os.path.abspath(args.file_path)
+    if not os.path.exists(input_path):
+        print(f"Error: File not found at '{input_path}'")
         sys.exit(1)
+
+    is_py = input_path.endswith(".py")
+    file_label = "Python File" if is_py else "Notebook"
+    unit_label = "SQL Queries" if is_py else "SQL Cells"
 
     print("=" * 70)
     print("      DATABRICKS SQL CODE REVIEW AGENT (V1)")
     print("=" * 70)
-    print(f"Analyzing Notebook: {notebook_path}\n")
+    print(f"Analyzing {file_label}: {input_path}\n")
 
-    result = run_sql_review(notebook_path)
+    result = run_sql_review(input_path)
 
     print("=== REVIEW SUMMARY METRICS ===")
-    print(f"Notebook ID           : {result.get('notebook_id')}")
-    print(f"Total SQL Cells       : {result.get('total_sql_cells')}")
+    print(f"{file_label} ID           : {result.get('notebook_id')}")
+    print(f"Total {unit_label}       : {result.get('total_sql_cells')}")
     print(f"AST Parse Errors      : {result.get('total_ast_parse_errors')}")
     print(f"Total Violations      : {result.get('total_violations')}")
     print("=" * 70 + "\n")

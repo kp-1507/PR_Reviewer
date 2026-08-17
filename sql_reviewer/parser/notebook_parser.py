@@ -1,7 +1,78 @@
 import json
 import os
+import ast
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, asdict
+
+
+def resolve_ast_string(node, variables) -> tuple[Optional[str], int]:
+    """Recursively resolves AST nodes into strings, returning (resolved_text, line_number)."""
+    lineno = getattr(node, "lineno", 1)
+    
+    # Resolve variable references
+    if isinstance(node, ast.Name) and node.id in variables:
+        return resolve_ast_string(variables[node.id], variables)
+        
+    # Resolve method calls (e.g., string.format() or string.replace())
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return resolve_ast_string(node.func.value, variables)
+        
+    # Resolve static strings (Python 3.8+)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value, lineno
+    elif hasattr(ast, "Str") and isinstance(node, ast.Str):  # Fallback for older Python
+        return node.s, lineno
+        
+    # Resolve f-strings (JoinedStr)
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for val in node.values:
+            if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                parts.append(val.value)
+            elif hasattr(ast, "Str") and isinstance(val, ast.Str):
+                parts.append(val.s)
+            else:
+                parts.append("__IDENTIFIER_PLACEHOLDER__")
+        return "".join(parts), lineno
+        
+    return None, lineno
+
+
+def extract_sql_from_python_code(python_code: str) -> list[dict]:
+    """Parses Python source code and extracts all spark.sql(...) queries."""
+    extracted_queries = []
+    try:
+        tree = ast.parse(python_code)
+    except Exception as e:
+        print(f"AST Parse Error: {e}")
+        return []
+
+    # Map variable assignments: x = "SELECT ..."
+    variables = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    variables[target.id] = node.value
+
+    # Find and extract spark.sql(...) arguments
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "sql"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "spark"
+            and node.args
+        ):
+            sql_text, lineno = resolve_ast_string(node.args[0], variables)
+            if sql_text and sql_text.strip():
+                extracted_queries.append({
+                    "sql_content": sql_text,
+                    "line_number": lineno
+                })
+                
+    return extracted_queries
 
 
 @dataclass
@@ -70,8 +141,10 @@ class NotebookParser:
             vscode_lang = metadata.get("vscode", {}).get("languageId", "").lower()
 
             is_sql_cell = False
+            is_python_cell = False
             has_other_magic = False
             cleaned_sql = source_text
+            cleaned_python = source_text
 
             lines = source_text.splitlines(keepends=True)
             first_non_empty_line_idx = -1
@@ -87,13 +160,27 @@ class NotebookParser:
                     # Replace %sql line with blank line to preserve line numbers 1:1
                     lines[first_non_empty_line_idx] = "\n"
                     cleaned_sql = "".join(lines)
+                elif first_line.startswith("%python") or first_line.startswith("%py"):
+                    is_python_cell = True
+                    # Replace %python line with blank line to preserve line numbers 1:1
+                    lines[first_non_empty_line_idx] = "\n"
+                    cleaned_python = "".join(lines)
                 elif first_line.startswith("%"):
-                    # Other magic command (%py, %python, %sh, %md, %r, etc.)
-                    is_sql_cell = False
+                    # Other magic command (%sh, %md, %r, etc.)
                     has_other_magic = True
 
-            if not is_sql_cell and not has_other_magic and (language_meta == "sql" or vscode_lang == "sql" or nb_lang == "sql"):
-                is_sql_cell = True
+            if not is_sql_cell and not is_python_cell and not has_other_magic:
+                if language_meta == "sql" or vscode_lang == "sql" or nb_lang == "sql":
+                    is_sql_cell = True
+                else:
+                    is_python = (
+                        language_meta in ("python", "py") or
+                        vscode_lang in ("python", "py") or
+                        nb_lang in ("python", "py") or
+                        not (language_meta or vscode_lang or nb_lang)
+                    )
+                    if is_python:
+                        is_python_cell = True
 
             if is_sql_cell and cleaned_sql.strip():
                 sql_cell_count += 1
@@ -105,6 +192,18 @@ class NotebookParser:
                     line_offset=0
                 )
                 sql_cells.append(cell_obj.to_dict())
+
+            elif is_python_cell:
+                extracted = extract_sql_from_python_code(cleaned_python)
+                for q in extracted:
+                    cell_obj = SQLCell(
+                        cell_id=idx,
+                        notebook_id=self.notebook_id,
+                        sql_content=q["sql_content"],
+                        original_source=source_text,
+                        line_offset=q["line_number"] - 1
+                    )
+                    sql_cells.append(cell_obj.to_dict())
 
         return sql_cells
 
