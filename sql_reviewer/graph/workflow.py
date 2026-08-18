@@ -99,12 +99,17 @@ def final_result_func(state: ReviewState) -> Dict[str, Any]:
     parse_errors = [res for res in ast_results if res.get("status") == "error"]
 
     if parse_errors and not llm_review:
+        error_details = []
+        for err in parse_errors:
+            loc = f"Line {err.get('cell_id')}" if notebook_id.endswith(".py") else f"Cell #{err.get('cell_id')}"
+            error_details.append(f"  • {loc}: {err.get('error')}")
+        errors_str = "\n".join(error_details)
         llm_review = (
             "=== LLM REVIEW SKIPPED ===\n"
-            f"Notice: Skipped LLM review due to {len(parse_errors)} AST parsing error(s) in notebook cells. "
+            f"Notice: Skipped LLM review due to {len(parse_errors)} AST parsing error(s):\n"
+            f"{errors_str}\n\n"
             "Resolve syntax errors before generating LLM summary."
         )
-
     final_result = {
         "notebook_id": notebook_id,
         "total_sql_cells": len(sql_cells),

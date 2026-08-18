@@ -39,6 +39,9 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str)
 
     for file in files:
         filename = file["filename"]
+        if not filename.endswith((".ipynb", ".py")):
+            continue
+
         content_url = f"https://api.github.com/repos/{owner}/{repo_name}/contents/{filename}"
         params = {"ref": head_sha}
 
@@ -55,7 +58,7 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str)
             encoded_content = content_data["content"]
             full_content = base64.b64decode(encoded_content).decode("utf-8")
 
-            if filename.endswith((".ipynb", ".py")):
+            if True:
                 try:
                     input_payload = None
                     if filename.endswith(".ipynb"):
