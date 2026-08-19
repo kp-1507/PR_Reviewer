@@ -99,11 +99,15 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str)
                         # Post review report to the GitHub PR
                         review_url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
                         review_payload = {
-                            "body": f"### 📊 SQL Code Review Report for `{filename}`\n\n{llm_review}",
+                            "body": f"SQL Code Review Report for `{filename}`\n\n{llm_review}",
                             "event": "COMMENT"
                         }
                         post_response = requests.post(review_url, headers=headers, json=review_payload)
                         print(f"Posted review to PR. Status code: {post_response.status_code}")
+                        # try:
+                        #     print("GitHub Response:", json.dumps(post_response.json(), indent=2))
+                        # except Exception:
+                        #     print("GitHub Response Text:", post_response.text)
 
                     print("\n==================================================\n")
                 except Exception as e:
