@@ -110,6 +110,24 @@ def final_result_func(state: ReviewState) -> Dict[str, Any]:
             f"{errors_str}\n\n"
             "Resolve syntax errors before generating LLM summary."
         )
+
+    if notebook_id.endswith(".py"):
+        cleaned_violations = []
+        for v in violations:
+            v_copy = dict(v)
+            if "cell_id" in v_copy:
+                del v_copy["cell_id"]
+            cleaned_violations.append(v_copy)
+        violations = cleaned_violations
+
+        cleaned_parse_errors = []
+        for pe in parse_errors:
+            pe_copy = dict(pe)
+            if "cell_id" in pe_copy:
+                del pe_copy["cell_id"]
+            cleaned_parse_errors.append(pe_copy)
+        parse_errors = cleaned_parse_errors
+
     final_result = {
         "notebook_id": notebook_id,
         "total_sql_cells": len(sql_cells),
