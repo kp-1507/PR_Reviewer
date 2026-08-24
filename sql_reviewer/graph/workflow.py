@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List
 import langchain
 # if not hasattr(langchain, "debug"):
@@ -86,6 +87,48 @@ def llm_review_func(state: ReviewState) -> Dict[str, Any]:
     return {"llm_review": llm_review}
 
 
+def convert_ansi_to_carets(raw_err: str) -> str:
+    ansi_underline_start = "\x1b[4m"
+    ansi_reset = "\x1b[0m"
+    
+    # Standardize any literal escapes if they got string-encoded
+    raw_err = raw_err.replace("\\u001b[4m", ansi_underline_start).replace("\\u001b[0m", ansi_reset)
+    
+    # Clean the "Col: X" suffix from the first line
+    lines = raw_err.splitlines()
+    if lines:
+        lines[0] = re.sub(r",\s*Col:\s*\d+", "", lines[0])
+    
+    formatted_lines = []
+    for line in lines:
+        if ansi_underline_start in line:
+            parts = line.split(ansi_underline_start)
+            before_highlight = parts[0]
+            
+            highlight_and_after = parts[1].split(ansi_reset)
+            highlighted_text = highlight_and_after[0]
+            after_highlight = highlight_and_after[1] if len(highlight_and_after) > 1 else ""
+            
+            clean_line = before_highlight + highlighted_text + after_highlight
+            formatted_lines.append(clean_line)
+            
+            # Construct a caret line aligning to tabs and spaces
+            caret_spaces = ""
+            for char in before_highlight:
+                if char == "\t":
+                    caret_spaces += "\t"
+                else:
+                    caret_spaces += " "
+            
+            caret_line = caret_spaces + "^" * len(highlighted_text)
+            formatted_lines.append(caret_line)
+        else:
+            clean_line = line.replace(ansi_underline_start, "").replace(ansi_reset, "")
+            formatted_lines.append(clean_line)
+            
+    return "\n".join(formatted_lines)
+
+
 def final_result_func(state: ReviewState) -> Dict[str, Any]:
     notebook_input = state["notebook"]
     parser = get_parser(notebook_input)
@@ -96,21 +139,41 @@ def final_result_func(state: ReviewState) -> Dict[str, Any]:
     context = state.get("context", "")
     llm_review = state.get("llm_review", "")
 
-    parse_errors = [res for res in ast_results if res.get("status") == "error"]
+    parse_errors = []
+    for cell, res in zip(sql_cells, ast_results):
+        if res.get("status") == "error":
+            error_entry = dict(res)
+            # Include the SQL query in the error output
+            error_entry["query"] = cell.get("sql_content", "").strip()
+            raw_err = res.get("error") or ""
+            # Keep the full raw error message (with sqlglot's line pointer and snippet)
+            error_entry["error"] = raw_err
+            # For .py files, compute the actual file line from the sqlglot error's internal line number
+            if notebook_id.endswith(".py"):
+                line_offset = cell.get("line_offset", 0)
+                match = re.search(r"Line (\d+)", raw_err)
+                if match:
+                    sql_error_line = int(match.group(1))
+                    error_entry["file_line"] = line_offset + sql_error_line
+                else:
+                    error_entry["file_line"] = res.get("cell_id", 0)
+            parse_errors.append(error_entry)
 
     if parse_errors and not llm_review:
         error_details = []
         for err in parse_errors:
-            loc = f"Line {err.get('cell_id')}" if notebook_id.endswith(".py") else f"Cell {err.get('cell_id')}"
-            raw_err = err.get('error') or ""
-            # Keep only the main error message line (first line)
-            first_line = raw_err.splitlines()[0] if raw_err.splitlines() else raw_err
-            error_details.append(f"{loc}: {first_line.strip()}")
-        errors_str = "\n".join(error_details)
+            if notebook_id.endswith(".py"):
+                loc = f"Line {err.get('file_line', err.get('cell_id'))}"
+            else:
+                loc = f"Cell {err.get('cell_id')}"
+            raw_err = err.get("error") or ""
+            clean_err = convert_ansi_to_carets(raw_err)
+            error_details.append(f"{loc}: {clean_err}")
+        errors_str = "\n\n".join(error_details)
         llm_review = (
             "LLM review skipped.\n"
-            f"Skipped LLM review due to {len(parse_errors)} AST parsing error(s):\n"
-            f"{errors_str}\n\n"
+            f"Skipped LLM review due to {len(parse_errors)} AST parsing error(s):\n\n"
+            f"{errors_str}\n"
             "Resolve syntax errors before generating LLM summary."
         )
 
@@ -128,6 +191,13 @@ def final_result_func(state: ReviewState) -> Dict[str, Any]:
             pe_copy = dict(pe)
             if "cell_id" in pe_copy:
                 del pe_copy["cell_id"]
+            # Promote file_line to "line" for clean output
+            if "file_line" in pe_copy:
+                pe_copy["line"] = pe_copy.pop("file_line")
+            # Remove internal fields
+            pe_copy.pop("status", None)
+            pe_copy.pop("ast", None)
+            pe_copy.pop("expressions", None)
             cleaned_parse_errors.append(pe_copy)
         parse_errors = cleaned_parse_errors
 

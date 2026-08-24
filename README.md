@@ -57,6 +57,8 @@ Create a `.env` file in the root directory:
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
 GITHUB_TOKEN=your_github_pat_token_here
+GITHUB_OWNER=your_github_username_or_org
+GITHUB_REPO=your_repository_name
 ```
 
 ### 4. Running Locally (CLI Mode)
@@ -74,27 +76,24 @@ python3 cli.py path/to/your/script.py
 
 ---
 
-## 🌐 Running via GitHub Webhooks (PR Mode)
+## 🔍 Manual CLI-Based PR Review
 
-To run the reviewer automatically whenever a Pull Request is opened or updated:
+Review Pull Request files directly from the command line without webhooks or GitHub Actions.
 
-### 1. Start your local server
+The reviewer is configured for a specific GitHub repository using `GITHUB_OWNER`, `GITHUB_REPO`, and `GITHUB_TOKEN` in your `.env` file. You only need to provide the PR number.
+
+### Usage
 ```bash
-uvicorn main:app --reload --port 8000
+# Review PR #42 (uses GITHUB_OWNER and GITHUB_REPO from .env)
+python3 main.py 42
+
+# Override owner and/or repo via CLI
+python3 main.py 42 --owner some-org --repo some-repo
 ```
 
-### 2. Expose the port using ngrok
-In a separate terminal, launch `ngrok`:
-```bash
-ngrok http 8000
-```
-Copy the forwarding HTTPS URL (e.g., `https://xxxx.ngrok-free.app`).
-
-### 3. Register the Webhook in GitHub
-1. Go to your target GitHub repository **Settings** > **Webhooks** > **Add webhook**.
-2. **Payload URL**: Append `/webhook/github` to your ngrok URL (e.g. `https://xxxx.ngrok-free.app/webhook/github`).
-3. **Content type**: `application/json`
-4. **Trigger events**: Select **Let me select individual events** -> check **Pull requests**.
-5. Click **Add webhook**.
-
-Whenever a PR is opened or updated, the webhook will fire, and your local server will instantly process the notebook files in the background and print the clean error highlights directly in your uvicorn console!
+### What It Does
+1. Fetches the list of changed files (`.ipynb`, `.py`) from the specified PR.
+2. Downloads and decodes each file's content at the PR's head SHA.
+3. Runs the full SQL review workflow (AST parsing, rule evaluation, LLM review).
+4. Prints the review results to the terminal.
+5. Posts the review as a comment on the GitHub PR (if LLM review is available).

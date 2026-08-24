@@ -28,13 +28,12 @@ class SQLParser:
                 "error": None
             }
         except Exception as e:
-            status = "skipped_dynamic" if "__IDENTIFIER_PLACEHOLDER__" in sql_content else "error"
             return {
                 "cell_id": cell_id,
-                "status": status,
+                "status": "error",
                 "ast": None,
                 "expressions": [],
-                "error": str(e) if status == "error" else None
+                "error": str(e)
             }
 
 

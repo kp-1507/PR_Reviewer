@@ -47,10 +47,7 @@ def main():
         print(json.dumps(result["violations"], indent=2))
         print("\n" + "=" * 70 + "\n")
 
-    if result.get("parse_errors"):
-        print("=== AST PARSE ERRORS ===")
-        print(json.dumps(result["parse_errors"], indent=2))
-        print("\n" + "=" * 70 + "\n")
+
 
     print("=== LLM REVIEW OUTPUT ===")
     print(result.get("llm_review"))
