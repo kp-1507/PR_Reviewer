@@ -63,7 +63,7 @@ class LLMReviewer:
                 "1. RULE-001 (Keyword Uppercase): Flag any SQL keywords (e.g., select, from, where, join, group by, order by, use, catalog, schema) written in lowercase or mixed-case.\n"
                 "2. RULE-002 (Descriptive Naming / No Cryptic Short-Forms): Flag short-form or cryptic abbreviations in column aliases and identifiers (e.g., cust, amt, txn, qty, cnt, dt). Require full, descriptive names (e.g., customer, amount, transaction, quantity, count, date).\n\n"
                 "CRITICAL OUTPUT FORMAT REQUIREMENTS:\n"
-                "The SQL Code lines provided in the context are prefixed with `[Line X]`. Use these prefixes to determine the exact absolute line number for any violation. Do not guess or do math.\n"
+                "The SQL Code lines provided in the context are prefixed with `[Line X]`. If a line is marked with `[MODIFIED]`, you MUST ONLY evaluate and review that line. DO NOT review or output violations for lines that do not have the `[MODIFIED]` tag.\n"
                 f"{format_requirements}\n"
                 "- Do NOT output full rewritten SQL queries.\n"
                 "- Do NOT include executive summaries or long narrative paragraphs.\n\n"

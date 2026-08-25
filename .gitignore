@@ -7,4 +7,5 @@ notebooks/
 .DS_Store
 
 .env
+*.db
 

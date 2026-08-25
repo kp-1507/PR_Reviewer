@@ -6,6 +6,7 @@ class ReviewState(TypedDict):
     Typed state for the SQL Code Review Agent LangGraph workflow.
     """
     notebook: Any
+    diff: str
     sql_cells: List[Dict[str, Any]]
     ast_results: List[Dict[str, Any]]
     violations: List[Dict[str, Any]]

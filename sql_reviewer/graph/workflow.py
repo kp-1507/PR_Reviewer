@@ -59,9 +59,10 @@ def build_context_func(state: ReviewState) -> Dict[str, Any]:
     sql_cells = state.get("sql_cells", [])
     ast_results = state.get("ast_results", [])
     violations = state.get("violations", [])
+    diff = state.get("diff", "")
 
     builder = ContextBuilder()
-    context = builder.build_context(notebook_id, sql_cells, ast_results, violations)
+    context = builder.build_context(notebook_id, sql_cells, ast_results, violations, diff)
     return {"context": context}
 
 
@@ -155,8 +156,14 @@ def create_sql_review_workflow():
 
 def run_sql_review(notebook_path_or_dict: Any) -> Dict[str, Any]:
     app = create_sql_review_workflow()
+    
+    diff_val = ""
+    if isinstance(notebook_path_or_dict, dict) and "diff" in notebook_path_or_dict:
+        diff_val = notebook_path_or_dict["diff"]
+        
     initial_state: ReviewState = {
         "notebook": notebook_path_or_dict,
+        "diff": diff_val,
         "sql_cells": [],
         "ast_results": [],
         "violations": [],
