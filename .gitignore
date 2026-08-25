@@ -5,7 +5,7 @@ __pycache__/
 venv
 notebooks/
 .DS_Store
-
+*.ipynb
 .env
 *.db
 

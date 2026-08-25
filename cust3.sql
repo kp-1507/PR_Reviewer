@@ -1,1 +1,0 @@
-select * from CUSTOMER_ORDERS;
