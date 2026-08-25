@@ -69,14 +69,20 @@ class LLMReviewer:
                 "- Do NOT include executive summaries or long narrative paragraphs.\n\n"
                 f"{context}"
             )
+            print("--- LLM PROMPT ---")
+            print(prompt)
+            print("------------------")
             response = client.models.generate_content(
                 model=self.model_name,
                 contents=prompt
             )
+            print("--- LLM RESPONSE ---")
+            print(response)
+            print("--------------------")
             if response and response.text:
                 return response.text.strip()
             else:
-                return self._generate_fallback_review(context, violations, reason="Empty response from LLM.", is_python_file=is_python_file)
+                return self._generate_fallback_review(context, violations, reason=f"Empty response from LLM. Response object: {repr(response)}", is_python_file=is_python_file)
 
         except Exception as e:
             return self._generate_fallback_review(context, violations, reason=f"LLM execution error: {str(e)}", is_python_file=is_python_file)
