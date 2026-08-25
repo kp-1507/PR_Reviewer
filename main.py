@@ -214,11 +214,12 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     head_sha = payload["pull_request"]["head"]["sha"]
     base_sha = payload["pull_request"]["base"]["sha"]
     merged = payload["pull_request"].get("merged", False)
+    merge_commit_sha = payload["pull_request"].get("merge_commit_sha")
 
-    # 1. PR MERGED: Save files to memory without review
-    if action == "closed" and merged:
-        print("PR merged! Scheduling database memory update...")
-        background_tasks.add_task(process_pr_merge, owner, repo_name, pr_number, head_sha)
+    # 1. PR MERGED: Save files to memory under the merge_commit_sha
+    if action == "closed" and merged and merge_commit_sha:
+        print(f"PR merged! Scheduling database memory update for merge commit {merge_commit_sha}...")
+        background_tasks.add_task(process_pr_merge, owner, repo_name, pr_number, merge_commit_sha)
         return {"status": "received", "message": "PR merge registered, database update scheduled"}
 
     # 2. PR OPENED / UPDATED: Run review
