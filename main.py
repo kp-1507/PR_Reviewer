@@ -175,6 +175,53 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
                 print(f"Error parsing or reviewing file {filename}: {e}")
 
 
+
+def process_pr_merge(owner: str, repo_name: str, pr_number: int, merge_commit_sha: str):
+    """Downloads merged files and saves them to the SQLite database memory under the merge_commit_sha."""
+    print("====== PR MERGE (Updating Database Memory) ======")
+    print("Merge Commit SHA:", merge_commit_sha)
+    url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json"
+    }
+
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        print("Error fetching merged files:", response.json())
+        return
+
+    files = response.json()
+    from code_store import save_file
+
+    for file in files:
+        filename = file["filename"]
+        if not filename.endswith((".ipynb", ".py")):
+            continue
+
+        # Skip deleted files
+        status = file.get("status")
+        if status == "removed":
+            continue
+
+        print(f"Downloading merged version of {filename} (ref: {merge_commit_sha})...")
+        content_url = f"https://api.github.com/repos/{owner}/{repo_name}/contents/{filename}"
+        params = {"ref": merge_commit_sha}
+        content_response = requests.get(content_url, headers=headers, params=params)
+        
+        if content_response.status_code == 200:
+            content_data = content_response.json()
+            if "content" in content_data:
+                encoded_content = content_data["content"]
+                full_content = base64.b64decode(encoded_content).decode("utf-8")
+                
+                repo_full_name = f"{owner}/{repo_name}"
+                save_file(repo_full_name, filename, merge_commit_sha, full_content)
+                print(f"✅ Successfully stored merged file {filename} at SHA {merge_commit_sha} in SQLite database.")
+        else:
+            print(f"Error downloading merged content for {filename}:", content_response.json())
+
+
 @app.post("/webhook/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     payload = await request.json()
@@ -184,8 +231,20 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
 
     action = payload.get("action")
     print("ACTION:", action)
+    merged = payload["pull_request"].get("merged", False)
+    merge_commit_sha = payload["pull_request"].get("merge_commit_sha")
 
-    if action in ["opened", "synchronize", "reopened"]:
+    # 1. PR MERGED: Save files to memory under the merge_commit_sha
+    if action == "closed" and merged and merge_commit_sha:
+        pr_number = payload["number"]
+        repo_name = payload["repository"]["name"]
+        owner = payload["repository"]["owner"]["login"]
+        print(f"PR merged! Scheduling database memory update for merge commit {merge_commit_sha}...")
+        background_tasks.add_task(process_pr_merge, owner, repo_name, pr_number, merge_commit_sha)
+        return {"status": "received", "message": "PR merge registered, database update scheduled"}
+
+    # 2. PR OPENED / UPDATED: Run review
+    elif action in ["opened", "synchronize", "reopened"]:
         pr_number = payload["number"]
         repo_name = payload["repository"]["name"]
         owner = payload["repository"]["owner"]["login"]
