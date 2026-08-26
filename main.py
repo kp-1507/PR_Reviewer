@@ -176,10 +176,11 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
 
 
 
-def process_pr_merge(owner: str, repo_name: str, pr_number: int, merge_commit_sha: str):
-    """Downloads merged files and saves them to the SQLite database memory under the merge_commit_sha."""
+def process_pr_merge(owner: str, repo_name: str, pr_number: int, merge_commit_sha: str, head_sha: str):
+    """Downloads merged files and saves them to the SQLite database memory under both merge_commit_sha and head_sha."""
     print("====== PR MERGE (Updating Database Memory) ======")
     print("Merge Commit SHA:", merge_commit_sha)
+    print("Head SHA (before merge):", head_sha)
     url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files"
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
@@ -216,8 +217,13 @@ def process_pr_merge(owner: str, repo_name: str, pr_number: int, merge_commit_sh
                 full_content = base64.b64decode(encoded_content).decode("utf-8")
                 
                 repo_full_name = f"{owner}/{repo_name}"
+                # Save under merge_commit_sha (the new commit on main)
                 save_file(repo_full_name, filename, merge_commit_sha, full_content)
-                print(f"✅ Successfully stored merged file {filename} at SHA {merge_commit_sha} in SQLite database.")
+                print(f"✅ Successfully stored merged file {filename} at merge SHA {merge_commit_sha} in SQLite database.")
+                
+                # Save under head_sha (the commit where subsequent branches may have diverged)
+                save_file(repo_full_name, filename, head_sha, full_content)
+                print(f"✅ Successfully stored merged file {filename} at head SHA {head_sha} in SQLite database.")
         else:
             print(f"Error downloading merged content for {filename}:", content_response.json())
 
@@ -234,13 +240,14 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     merged = payload["pull_request"].get("merged", False)
     merge_commit_sha = payload["pull_request"].get("merge_commit_sha")
 
-    # 1. PR MERGED: Save files to memory under the merge_commit_sha
+    # 1. PR MERGED: Save files to memory under both merge_commit_sha and head_sha
     if action == "closed" and merged and merge_commit_sha:
         pr_number = payload["number"]
         repo_name = payload["repository"]["name"]
         owner = payload["repository"]["owner"]["login"]
-        print(f"PR merged! Scheduling database memory update for merge commit {merge_commit_sha}...")
-        background_tasks.add_task(process_pr_merge, owner, repo_name, pr_number, merge_commit_sha)
+        head_sha = payload["pull_request"]["head"]["sha"]
+        print(f"PR merged! Scheduling database memory update for merge commit {merge_commit_sha} and head commit {head_sha}...")
+        background_tasks.add_task(process_pr_merge, owner, repo_name, pr_number, merge_commit_sha, head_sha)
         return {"status": "received", "message": "PR merge registered, database update scheduled"}
 
     # 2. PR OPENED / UPDATED: Run review
