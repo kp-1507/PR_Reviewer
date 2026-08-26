@@ -68,7 +68,18 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
         if not filename.endswith((".ipynb", ".py")):
             continue
 
+        # Skip deleted files — nothing to review
+        status = file.get("status")
+        if status == "removed":
+            print(f"⏭️ Skipping deleted file {filename}")
+            continue
+
+        # Skip files with no actual code changes (e.g. files touched during merge conflict resolution)
         patch = file.get("patch", "")
+        if not patch or not patch.strip():
+            print(f"⏭️ Skipping {filename} — no diff/patch (unchanged or binary)")
+            continue
+
         print("--------------------------------------------------")
         print("File:", filename)
         print("Patch:\n", patch)

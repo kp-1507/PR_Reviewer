@@ -43,8 +43,8 @@ class ContextBuilder:
         violations: List[Dict[str, Any]],
         diff: str = ""
     ) -> str:
+        has_diff = bool(diff and diff.strip())
         modified_lines = self._get_modified_lines(diff)
-        has_diff = len(modified_lines) > 0
 
         ast_map = {res["cell_id"]: res for res in ast_results}
         violations_by_cell: Dict[int, List[Dict[str, Any]]] = {}
