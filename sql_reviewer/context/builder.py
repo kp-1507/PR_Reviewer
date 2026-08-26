@@ -10,8 +10,8 @@ class ContextBuilder:
     Filters content to only show modified SQL cells and lines when a diff is provided.
     """
 
-    def _get_modified_lines(self, patch: str) -> Set[int]:
-        """Parses a unified diff and returns line numbers modified in the new file."""
+    def _get_modified_lines_python(self, patch: str) -> Set[int]:
+        """Parses a unified diff for .py files and returns modified line numbers."""
         modified_lines = set()
         if not patch:
             return modified_lines
@@ -26,7 +26,7 @@ class ContextBuilder:
                 current_line = int(match.group(1))
                 in_hunk = True
             elif in_hunk:
-                if line.startswith('+'):
+                if line.startswith('+') and not line.startswith('+++'):
                     modified_lines.add(current_line)
                     current_line += 1
                 elif line.startswith('-'):
@@ -34,6 +34,27 @@ class ContextBuilder:
                 else:
                     current_line += 1
         return modified_lines
+
+    def _get_modified_content_ipynb(self, patch: str) -> Set[str]:
+        """Extracts normalized added lines from a unified diff of a .ipynb JSON file."""
+        added_lines = set()
+        if not patch:
+            return added_lines
+
+        for line in patch.splitlines():
+            if line.startswith('+') and not line.startswith('+++'):
+                cleaned = line[1:].strip()
+                # If wrapped in JSON string quotes
+                if cleaned.startswith('"'):
+                    if cleaned.endswith('",'):
+                        cleaned = cleaned[1:-2]
+                    elif cleaned.endswith('"'):
+                        cleaned = cleaned[1:-1]
+                    cleaned = cleaned.replace('\\"', '"').replace('\\n', '').replace('\\t', ' ').replace('\\\\', '\\')
+                normalized = re.sub(r'\s+', ' ', cleaned).strip()
+                if normalized:
+                    added_lines.add(normalized)
+        return added_lines
 
     def build_context(
         self,
@@ -44,7 +65,14 @@ class ContextBuilder:
         diff: str = ""
     ) -> str:
         has_diff = bool(diff and diff.strip())
-        modified_lines = self._get_modified_lines(diff)
+        is_python_file = notebook_id.endswith(".py")
+
+        if is_python_file:
+            modified_lines_py = self._get_modified_lines_python(diff)
+            ipynb_added_lines = set()
+        else:
+            modified_lines_py = set()
+            ipynb_added_lines = self._get_modified_content_ipynb(diff)
 
         ast_map = {res["cell_id"]: res for res in ast_results}
         violations_by_cell: Dict[int, List[Dict[str, Any]]] = {}
@@ -65,7 +93,6 @@ class ContextBuilder:
             ""
         ]
 
-        is_python_file = notebook_id.endswith(".py")
         included_cells_count = 0
 
         for cell in sql_cells:
@@ -74,15 +101,25 @@ class ContextBuilder:
             cell_violations = violations_by_cell.get(cell_id, [])
             parse_error = ast_res.get("error")
 
-            # Check if this cell overlaps with modified lines
             sql_lines = cell["sql_content"].splitlines()
             start_line = cell.get("line_offset", 0) + 1
             end_line = start_line + len(sql_lines) - 1
             cell_line_set = set(range(start_line, end_line + 1))
 
-            if has_diff and not cell_line_set.intersection(modified_lines):
-                # Skip unmodified cells entirely to save tokens
-                continue
+            # Determine which lines in this cell are modified
+            modified_in_this_cell: Set[int] = set()
+            if has_diff:
+                if is_python_file:
+                    modified_in_this_cell = cell_line_set.intersection(modified_lines_py)
+                else:
+                    for line_idx, line_str in enumerate(sql_lines):
+                        norm_str = re.sub(r'\s+', ' ', line_str).strip()
+                        if norm_str and norm_str in ipynb_added_lines:
+                            modified_in_this_cell.add(line_idx + start_line)
+
+                # Skip cell if no modified lines are found in this cell
+                if not modified_in_this_cell:
+                    continue
 
             included_cells_count += 1
 
@@ -95,9 +132,8 @@ class ContextBuilder:
             # Prefix each line with its absolute line number
             for line_idx, line in enumerate(sql_lines):
                 abs_line = line_idx + start_line
-                # Mark modified lines with a '+' to help the LLM identify changes
                 prefix = "[Line " + str(abs_line) + "]"
-                if has_diff and abs_line in modified_lines:
+                if has_diff and abs_line in modified_in_this_cell:
                     prefix = "[Line " + str(abs_line) + "][MODIFIED]"
                 lines.append(f"{prefix} {line}")
             lines.append("")
@@ -107,7 +143,7 @@ class ContextBuilder:
 
             # Filter violations to only modified lines if diff is present
             if has_diff:
-                cell_violations = [v for v in cell_violations if v["line"] in modified_lines]
+                cell_violations = [v for v in cell_violations if v["line"] in modified_in_this_cell]
 
             if cell_violations:
                 lines.append(f"Detected Deterministic Violations ({len(cell_violations)}):")
