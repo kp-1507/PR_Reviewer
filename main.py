@@ -1,4 +1,4 @@
-import base64 
+import base64
 import json
 import os
 import requests
@@ -14,6 +14,18 @@ load_dotenv()
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 
+def get_merge_base_sha(owner: str, repo_name: str, base_sha: str, head_sha: str, headers: dict) -> str | None:
+    """Call GitHub Compare API to find the true merge base SHA between base and head branches."""
+    compare_url = f"https://api.github.com/repos/{owner}/{repo_name}/compare/{base_sha}...{head_sha}"
+    response = requests.get(compare_url, headers=headers)
+    if response.status_code == 200:
+        merge_base_sha = response.json().get("merge_base_commit", {}).get("sha")
+        print(f"Merge base SHA resolved: {merge_base_sha}")
+        return merge_base_sha
+    print(f"Failed to resolve merge base SHA. Status: {response.status_code}")
+    return None
+
+
 def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str, base_sha: str):
     """Processes PR files and executes SQL review in the background to prevent webhook timeout."""
     print("====== PR EVENT (Processing in Background) ======")
@@ -21,77 +33,83 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
     print("Repository:", repo_name)
     print("PR Number:", pr_number)
     print("Head SHA:", head_sha)
-    print("Base SHA:", base_sha)
+    print("Base SHA (tip of main):", base_sha)
 
-    url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files"
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Accept": "application/vnd.github+json"
     }
 
+    # Step 1: Resolve the true merge base SHA via GitHub Compare API
+    # The patch in PR files is relative to the merge base, NOT base_sha (tip of main)
+    merge_base_sha = get_merge_base_sha(owner, repo_name, base_sha, head_sha, headers)
+    if not merge_base_sha:
+        print("Could not resolve merge base SHA. Aborting review.")
+        return
+
+    # Step 2: Fetch the list of changed files in this PR
+    url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files"
     response = requests.get(url, headers=headers)
-    print("GitHub API Status:", response.status_code)
+    print("GitHub PR Files API Status:", response.status_code)
 
     if response.status_code != 200:
         print("Error fetching PR files:", response.json())
         return
 
     files = response.json()
-    
 
     from code_store import get_stored_file, save_file
     from patch_utility import apply_patch
+
+    repo_full_name = f"{owner}/{repo_name}"
 
     for file in files:
         filename = file["filename"]
         if not filename.endswith((".ipynb", ".py")):
             continue
-            
+
         patch = file.get("patch", "")
         print("--------------------------------------------------")
-        print("printing patch or diff for file:", filename)
-        print(patch)
-        
-        repo_full_name = f"{owner}/{repo_name}"
-        
-        # 1. Fetch base_sha content from SQLite
-        stored_base = get_stored_file(repo_full_name, filename, base_sha)
-        
+        print("File:", filename)
+        print("Patch:\n", patch)
+
+        # Step 3: Look up merge_base_sha in SQLite
+        stored_base = get_stored_file(repo_full_name, filename, merge_base_sha)
+
         if not stored_base:
-            # First time seeing this base file, download the clean base version from GitHub
-            print(f"base_sha ({base_sha}) not found in cache. Downloading base version of {filename}...")
+            # Bootstrap: first time we see this merge base, download it from GitHub
+            print(f"merge_base_sha ({merge_base_sha[:8]}) not in cache. Downloading base version of {filename}...")
             content_url = f"https://api.github.com/repos/{owner}/{repo_name}/contents/{filename}"
-            params = {"ref": base_sha}
-            content_response = requests.get(content_url, headers=headers, params=params)
-            
+            content_response = requests.get(content_url, headers=headers, params={"ref": merge_base_sha})
+
             if content_response.status_code == 200:
                 content_data = content_response.json()
                 if "content" in content_data:
-                    encoded_content = content_data["content"]
-                    stored_base = base64.b64decode(encoded_content).decode("utf-8")
-                    # Save the clean base version to SQLite
-                    save_file(repo_full_name, filename, base_sha, stored_base)
+                    stored_base = base64.b64decode(content_data["content"]).decode("utf-8")
+                    # Cache the merge base content so future PRs with the same base skip this download
+                    save_file(repo_full_name, filename, merge_base_sha, stored_base)
+                    print(f"✅ Cached merge base of {filename} at {merge_base_sha[:8]}")
             else:
-                # If base_sha does not exist (e.g. file is brand new in the PR), base content is empty
+                # Brand new file added in this PR — no base content exists
+                print(f"File {filename} is new in this PR (no base content).")
                 stored_base = ""
-                
-        # 2. Apply patch to base content to get head content
+
+        # Step 4: Apply patch on merge base content to reconstruct developer's code
         full_content = None
         if patch:
             try:
                 full_content = apply_patch(stored_base, patch)
-                print(f"Applied patch to base content for {filename}")
+                print(f"✅ Patch applied for {filename} (no full file download!)")
             except Exception as patch_err:
-                print(f"Error applying patch to base content for {filename}: {patch_err}. Falling back to GitHub download.")
+                print(f"⚠️  Patch failed for {filename}: {patch_err}. Falling back to GitHub download.")
         else:
             full_content = stored_base
-                    
-        # 3. Fallback: Download from GitHub if patch application failed
+
+        # Step 5: Fallback — download head version if patch failed
         if not full_content:
-            print(f"Downloading full file {filename} from GitHub (ref: {head_sha})...")
+            print(f"📥 Downloading full file {filename} from GitHub (ref: {head_sha})...")
             content_url = f"https://api.github.com/repos/{owner}/{repo_name}/contents/{filename}"
-            params = {"ref": head_sha}
-            content_response = requests.get(content_url, headers=headers, params=params)
+            content_response = requests.get(content_url, headers=headers, params={"ref": head_sha})
             print(f"Content API Status for {filename}:", content_response.status_code)
 
             if content_response.status_code != 200:
@@ -100,13 +118,11 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
 
             content_data = content_response.json()
             if "content" in content_data:
-                encoded_content = content_data["content"]
-                full_content = base64.b64decode(encoded_content).decode("utf-8")
+                full_content = base64.b64decode(content_data["content"]).decode("utf-8")
 
-        # NOTE: We do NOT save full_content (head_sha) to SQLite during the review loop!
-        # Unmerged code remains local to the review session.
+        # NOTE: We do NOT save head content to SQLite. Unmerged code stays out of the database.
 
-        if full_content and filename.endswith((".ipynb", ".py")):
+        if full_content:
             try:
                 input_payload = None
                 if filename.endswith(".ipynb"):
@@ -145,7 +161,7 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
                     print("\n🔍 SEMANTIC & PERFORMANCE FINDINGS (LLM):")
                     print(llm_review)
 
-                    # Post review report to the GitHub PR
+                    # Post review comment to GitHub PR
                     review_url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
                     review_payload = {
                         "body": f"### 📊 SQL Code Review Report for `{filename}`\n\n{llm_review}",
@@ -157,73 +173,25 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
                 print("\n==================================================\n")
             except Exception as e:
                 print(f"Error parsing or reviewing file {filename}: {e}")
-                    
-
-def process_pr_merge(owner: str, repo_name: str, pr_number: int, head_sha: str):
-    """Downloads merged files and saves them to the SQLite database memory."""
-    print("====== PR MERGE (Updating Database Memory) ======")
-    url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files"
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json"
-    }
-
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        print("Error fetching merged files:", response.json())
-        return
-
-    files = response.json()
-    from code_store import save_file
-
-    for file in files:
-        filename = file["filename"]
-        if not filename.endswith((".ipynb", ".py")):
-            continue
-
-        print(f"Downloading merged version of {filename} (ref: {head_sha})...")
-        content_url = f"https://api.github.com/repos/{owner}/{repo_name}/contents/{filename}"
-        params = {"ref": head_sha}
-        content_response = requests.get(content_url, headers=headers, params=params)
-        
-        if content_response.status_code == 200:
-            content_data = content_response.json()
-            if "content" in content_data:
-                encoded_content = content_data["content"]
-                full_content = base64.b64decode(encoded_content).decode("utf-8")
-                
-                repo_full_name = f"{owner}/{repo_name}"
-                save_file(repo_full_name, filename, head_sha, full_content)
-                print(f"✅ Successfully stored merged file {filename} at SHA {head_sha} in SQLite database.")
-        else:
-            print(f"Error downloading merged content for {filename}:", content_response.json())
 
 
 @app.post("/webhook/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     payload = await request.json()
 
-    action = payload.get("action")
-    print("ACTION:", action)
     if "pull_request" not in payload:
         return {"status": "ignored"}
 
-    pr_number = payload["number"]
-    repo_name = payload["repository"]["name"]
-    owner = payload["repository"]["owner"]["login"]
-    head_sha = payload["pull_request"]["head"]["sha"]
-    base_sha = payload["pull_request"]["base"]["sha"]
-    merged = payload["pull_request"].get("merged", False)
-    merge_commit_sha = payload["pull_request"].get("merge_commit_sha")
+    action = payload.get("action")
+    print("ACTION:", action)
 
-    # 1. PR MERGED: Save files to memory under the merge_commit_sha
-    if action == "closed" and merged and merge_commit_sha:
-        print(f"PR merged! Scheduling database memory update for merge commit {merge_commit_sha}...")
-        background_tasks.add_task(process_pr_merge, owner, repo_name, pr_number, merge_commit_sha)
-        return {"status": "received", "message": "PR merge registered, database update scheduled"}
+    if action in ["opened", "synchronize", "reopened"]:
+        pr_number = payload["number"]
+        repo_name = payload["repository"]["name"]
+        owner = payload["repository"]["owner"]["login"]
+        head_sha = payload["pull_request"]["head"]["sha"]
+        base_sha = payload["pull_request"]["base"]["sha"]
 
-    # 2. PR OPENED / UPDATED: Run review
-    elif action in ["opened", "synchronize", "reopened"]:
         print("PR opened/updated! Scheduling review...")
         background_tasks.add_task(process_pr_review, owner, repo_name, pr_number, head_sha, base_sha)
         return {"status": "received", "message": "Review processing in background"}
