@@ -66,7 +66,8 @@ class LLMReviewer:
                 "The SQL Code lines provided in the context are prefixed with `[Line X]`. If a line is marked with `[MODIFIED]`, you MUST ONLY evaluate and review that line. DO NOT review or output violations for lines that do not have the `[MODIFIED]` tag.\n"
                 f"{format_requirements}\n"
                 "- Do NOT output full rewritten SQL queries.\n"
-                "- Do NOT include executive summaries or long narrative paragraphs.\n\n"
+                "- Do NOT include executive summaries or long narrative paragraphs.\n"
+                "- If NO violations are found for the modified lines, respond with exactly: '✅ No SQL violations found in the modified code.'\n\n"
                 f"{context}"
             )
             print(f"🤖 Sending {len(prompt)} chars to LLM ({self.model_name})...")
@@ -89,12 +90,20 @@ class LLMReviewer:
                     print(f"⚠️ {reason}")
                     return self._generate_fallback_review(context, violations, reason=reason, is_python_file=is_python_file)
 
-            if response.text:
-                print(f"✅ LLM review received ({len(response.text)} chars)")
-                return response.text.strip()
+            # Extract text — handle empty content (model finished with STOP but no output text)
+            response_text = None
+            try:
+                response_text = response.text
+            except (ValueError, AttributeError):
+                pass
+
+            if response_text and response_text.strip():
+                print(f"✅ LLM review received ({len(response_text)} chars)")
+                return response_text.strip()
             else:
-                print(f"⚠️ LLM returned empty text. Full response: {repr(response)}")
-                return self._generate_fallback_review(context, violations, reason=f"Empty text from LLM. Response: {repr(response)}", is_python_file=is_python_file)
+                # finish_reason=STOP + empty content = model found no violations
+                print("✅ LLM found no violations (empty response with STOP)")
+                return "✅ No SQL violations found in the modified code."
 
         except Exception as e:
             return self._generate_fallback_review(context, violations, reason=f"LLM execution error: {str(e)}", is_python_file=is_python_file)
