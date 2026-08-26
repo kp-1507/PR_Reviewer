@@ -69,20 +69,32 @@ class LLMReviewer:
                 "- Do NOT include executive summaries or long narrative paragraphs.\n\n"
                 f"{context}"
             )
-            print("--- LLM PROMPT ---")
-            print(prompt)
-            print("------------------")
+            print(f"🤖 Sending {len(prompt)} chars to LLM ({self.model_name})...")
             response = client.models.generate_content(
                 model=self.model_name,
                 contents=prompt
             )
-            print("--- LLM RESPONSE ---")
-            print(response)
-            print("--------------------")
-            if response and response.text:
+
+            # Check for blocked responses (safety filters, quota, etc.)
+            if not response:
+                return self._generate_fallback_review(context, violations, reason="LLM returned None response (possible API quota exhaustion)", is_python_file=is_python_file)
+
+            # Check if response was blocked by safety filters
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'finish_reason') and candidate.finish_reason and str(candidate.finish_reason) not in ('STOP', 'FinishReason.STOP', '1'):
+                    reason = f"LLM response blocked. Finish reason: {candidate.finish_reason}"
+                    if hasattr(candidate, 'safety_ratings'):
+                        reason += f" | Safety ratings: {candidate.safety_ratings}"
+                    print(f"⚠️ {reason}")
+                    return self._generate_fallback_review(context, violations, reason=reason, is_python_file=is_python_file)
+
+            if response.text:
+                print(f"✅ LLM review received ({len(response.text)} chars)")
                 return response.text.strip()
             else:
-                return self._generate_fallback_review(context, violations, reason=f"Empty response from LLM. Response object: {repr(response)}", is_python_file=is_python_file)
+                print(f"⚠️ LLM returned empty text. Full response: {repr(response)}")
+                return self._generate_fallback_review(context, violations, reason=f"Empty text from LLM. Response: {repr(response)}", is_python_file=is_python_file)
 
         except Exception as e:
             return self._generate_fallback_review(context, violations, reason=f"LLM execution error: {str(e)}", is_python_file=is_python_file)
