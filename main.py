@@ -217,6 +217,7 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
                     review_body = f"### 📊 SQL Code Review Report for `{filename}`\n\n{llm_review}"
 
                 if review_body:
+                    # 1. Post review comment (with Issue Comment fallback)
                     review_url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
                     review_payload = {
                         "body": review_body,
@@ -224,6 +225,25 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
                     }
                     post_response = requests.post(review_url, headers=headers, json=review_payload)
                     print(f"Posted review to PR. Status code: {post_response.status_code}")
+
+                    if post_response.status_code not in (200, 201):
+                        print(f"⚠️ PR Review endpoint returned {post_response.status_code}: {post_response.text}")
+                        print("Posting via Issue Comments API fallback...")
+                        issue_url = f"https://api.github.com/repos/{owner}/{repo_name}/issues/{pr_number}/comments"
+                        issue_response = requests.post(issue_url, headers=headers, json={"body": review_body})
+                        print(f"Issue comment fallback status code: {issue_response.status_code}")
+                        if issue_response.status_code not in (200, 201):
+                            print(f"Error posting fallback comment: {issue_response.text}")
+
+                    # 2. Update Commit Status Check so GitHub UI stops loading/spinning
+                    status_url = f"https://api.github.com/repos/{owner}/{repo_name}/statuses/{head_sha}"
+                    status_payload = {
+                        "state": "failure" if parse_errors else "success",
+                        "description": f"SQL syntax errors in {filename}" if parse_errors else f"SQL review passed for {filename}",
+                        "context": "sql-code-reviewer"
+                    }
+                    status_response = requests.post(status_url, headers=headers, json=status_payload)
+                    print(f"Commit status check updated to '{status_payload['state']}'. Status code: {status_response.status_code}")
 
                 print("\n==================================================\n")
             except Exception as e:
