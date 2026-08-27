@@ -1,12 +1,12 @@
 import re
 from typing import Any, Dict, List
 import langchain
-# if not hasattr(langchain, "debug"):
-#     langchain.debug = False
-# if not hasattr(langchain, "verbose"):
-#     langchain.verbose = False
-# if not hasattr(langchain, "llm_cache"):
-#     langchain.llm_cache = None
+if not hasattr(langchain, "debug"):
+    langchain.debug = False
+if not hasattr(langchain, "verbose"):
+    langchain.verbose = False
+if not hasattr(langchain, "llm_cache"):
+    langchain.llm_cache = None
 
 from langgraph.graph import StateGraph, START, END
 
@@ -148,34 +148,15 @@ def final_result_func(state: ReviewState) -> Dict[str, Any]:
             raw_err = res.get("error") or ""
             # Keep the full raw error message (with sqlglot's line pointer and snippet)
             error_entry["error"] = raw_err
-            # For .py files, compute the actual file line from the sqlglot error's internal line number
-            if notebook_id.endswith(".py"):
-                line_offset = cell.get("line_offset", 0)
-                match = re.search(r"Line (\d+)", raw_err)
-                if match:
-                    sql_error_line = int(match.group(1))
-                    error_entry["file_line"] = line_offset + sql_error_line
-                else:
-                    error_entry["file_line"] = res.get("cell_id", 0)
+            # Compute line relative to cell start (or file start for .py)
+            line_offset = cell.get("line_offset", 0)
+            match = re.search(r"Line (\d+)", raw_err)
+            sql_error_line = int(match.group(1)) if match else 1
+            error_entry["line"] = line_offset + sql_error_line
             parse_errors.append(error_entry)
 
     if parse_errors and not llm_review:
-        error_details = []
-        for err in parse_errors:
-            if notebook_id.endswith(".py"):
-                loc = f"Line {err.get('file_line', err.get('cell_id'))}"
-            else:
-                loc = f"Cell {err.get('cell_id')}"
-            raw_err = err.get("error") or ""
-            clean_err = convert_ansi_to_carets(raw_err)
-            error_details.append(f"{loc}: {clean_err}")
-        errors_str = "\n\n".join(error_details)
-        llm_review = (
-            "LLM review skipped.\n"
-            f"Skipped LLM review due to {len(parse_errors)} AST parsing error(s):\n\n"
-            f"{errors_str}\n"
-            "Resolve syntax errors before generating LLM summary."
-        )
+        llm_review = []
 
     if notebook_id.endswith(".py"):
         cleaned_violations = []
@@ -186,20 +167,17 @@ def final_result_func(state: ReviewState) -> Dict[str, Any]:
             cleaned_violations.append(v_copy)
         violations = cleaned_violations
 
-        cleaned_parse_errors = []
-        for pe in parse_errors:
-            pe_copy = dict(pe)
-            if "cell_id" in pe_copy:
-                del pe_copy["cell_id"]
-            # Promote file_line to "line" for clean output
-            if "file_line" in pe_copy:
-                pe_copy["line"] = pe_copy.pop("file_line")
-            # Remove internal fields
-            pe_copy.pop("status", None)
-            pe_copy.pop("ast", None)
-            pe_copy.pop("expressions", None)
-            cleaned_parse_errors.append(pe_copy)
-        parse_errors = cleaned_parse_errors
+    cleaned_parse_errors = []
+    for pe in parse_errors:
+        pe_copy = dict(pe)
+        if notebook_id.endswith(".py") and "cell_id" in pe_copy:
+            del pe_copy["cell_id"]
+        # Remove internal fields
+        pe_copy.pop("status", None)
+        pe_copy.pop("ast", None)
+        pe_copy.pop("expressions", None)
+        cleaned_parse_errors.append(pe_copy)
+    parse_errors = cleaned_parse_errors
 
     final_result = {
         "notebook_id": notebook_id,
@@ -243,6 +221,7 @@ def create_sql_review_workflow():
         }
     )
 
+    # workflow.add_edge("build_context", "run_llm_review")
     workflow.add_edge("run_llm_review", "compile_final_result")
     workflow.add_edge("compile_final_result", END)
 

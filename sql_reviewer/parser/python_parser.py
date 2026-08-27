@@ -1,6 +1,6 @@
 import os
 from typing import Any, Dict, List
-from sql_reviewer.parser.notebook_parser import extract_sql_from_python_code, SQLCell
+from sql_reviewer.parser.notebook_parser import extract_sql_from_python_code, extract_sql_from_wrappers, SQLCell
 
 
 class PythonParser:
@@ -32,6 +32,7 @@ class PythonParser:
     def extract_sql_cells(self) -> List[Dict[str, Any]]:
         sql_cells: List[Dict[str, Any]] = []
         extracted = extract_sql_from_python_code(self.file_content)
+        extracted.extend(extract_sql_from_wrappers(self.file_content))
 
         for q in extracted:
             lineno = q["line_number"]

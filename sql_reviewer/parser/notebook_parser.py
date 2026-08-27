@@ -17,9 +17,9 @@ def resolve_ast_string(node, variables) -> tuple[Optional[str], int]:
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         return resolve_ast_string(node.func.value, variables)
         
-    # Resolve static strings (Python 3.8+)
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value, lineno
+    # Resolve static constants (Python 3.8+)
+    if isinstance(node, ast.Constant):
+        return str(node.value), lineno
     elif hasattr(ast, "Str") and isinstance(node, ast.Str):  # Fallback for older Python
         return node.s, lineno
         
@@ -31,9 +31,25 @@ def resolve_ast_string(node, variables) -> tuple[Optional[str], int]:
                 parts.append(val.value)
             elif hasattr(ast, "Str") and isinstance(val, ast.Str):
                 parts.append(val.s)
+            elif isinstance(val, ast.FormattedValue):
+                resolved_str, _ = resolve_ast_string(val.value, variables)
+                if resolved_str is not None:
+                    parts.append(str(resolved_str))
+                else:
+                    parts.append("__IDENTIFIER_PLACEHOLDER__")
             else:
                 parts.append("__IDENTIFIER_PLACEHOLDER__")
         return "".join(parts), lineno
+        
+    # Resolve string concatenation (BinOp with Add)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left_str, left_line = resolve_ast_string(node.left, variables)
+        right_str, _ = resolve_ast_string(node.right, variables)
+        
+        left_str = left_str if left_str is not None else "__IDENTIFIER_PLACEHOLDER__"
+        right_str = right_str if right_str is not None else "__IDENTIFIER_PLACEHOLDER__"
+        
+        return left_str + right_str, left_line or lineno
         
     return None, lineno
 
@@ -74,6 +90,58 @@ def extract_sql_from_python_code(python_code: str) -> list[dict]:
                 
     return extracted_queries
 
+
+def extract_sql_from_wrappers(python_code: str) -> list[dict]:
+    """Parses Python code to dynamically detect and extract SQL from custom wrapper functions."""
+    extracted_queries = []
+    try:
+        tree = ast.parse(python_code)
+        
+        # 1. Track variables
+        variables = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        variables[target.id] = node.value
+
+        # 2. Find SQL Wrapper Functions
+        sql_wrappers = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                for child in ast.walk(node):
+                    if (
+                        isinstance(child, ast.Call)
+                        and isinstance(child.func, ast.Attribute)
+                        and child.func.attr == "sql"
+                        and isinstance(child.func.value, ast.Name)
+                        and child.func.value.id == "spark"
+                        and child.args
+                    ):
+                        arg = child.args[0]
+                        if isinstance(arg, ast.Name):
+                            for idx, param in enumerate(node.args.args):
+                                if param.arg == arg.id:
+                                    sql_wrappers[node.name] = idx
+                                    break
+
+        # 3. Extract calls to those wrappers
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in sql_wrappers:
+                param_idx = sql_wrappers[node.func.id]
+                if len(node.args) > param_idx:
+                    passed_arg = node.args[param_idx]
+                    sql_text, lineno = resolve_ast_string(passed_arg, variables)
+                    if sql_text and sql_text.strip():
+                        extracted_queries.append({
+                            "sql_content": sql_text,
+                            "line_number": getattr(node, "lineno", lineno)
+                        })
+                        
+    except Exception:
+        pass
+        
+    return extracted_queries
 
 @dataclass
 class SQLCell:
@@ -164,6 +232,12 @@ class NotebookParser:
                     is_python_cell = True
                     # Replace %python line with blank line to preserve line numbers 1:1
                     lines[first_non_empty_line_idx] = "\n"
+                    
+                    for i in range(len(lines)):
+                        stripped = lines[i].strip()
+                        if stripped.startswith("!") or stripped.startswith("%"):
+                            lines[i] = "# " + lines[i]
+                            
                     cleaned_python = "".join(lines)
                 elif first_line.startswith("%"):
                     # Other magic command (%sh, %md, %r, etc.)
@@ -181,6 +255,11 @@ class NotebookParser:
                     )
                     if is_python:
                         is_python_cell = True
+                        for i in range(len(lines)):
+                            stripped = lines[i].strip()
+                            if stripped.startswith("!") or stripped.startswith("%"):
+                                lines[i] = "# " + lines[i]
+                        cleaned_python = "".join(lines)
 
             if is_sql_cell and cleaned_sql.strip():
                 sql_cell_count += 1
@@ -195,6 +274,7 @@ class NotebookParser:
 
             elif is_python_cell:
                 extracted = extract_sql_from_python_code(cleaned_python)
+                extracted.extend(extract_sql_from_wrappers(cleaned_python))
                 for q in extracted:
                     cell_obj = SQLCell(
                         cell_id=idx,

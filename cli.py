@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from sql_reviewer.graph.workflow import run_sql_review
+from sql_reviewer.graph.workflow import run_sql_review, convert_ansi_to_carets
 
 
 def main():
@@ -42,16 +42,37 @@ def main():
     print(f"Total Violations      : {result.get('total_violations')}")
     print("=" * 70 + "\n")
 
+    def get_label(item):
+        if is_py:
+            return f"Line {item.get('line')}"
+        return f"Cell #{item.get('cell_id', '?')} Line {item.get('line_within_cell', item.get('line'))}"
+
+    if result.get("parse_errors"):
+        print("=== AST PARSE ERRORS ===")
+        for pe in result["parse_errors"]:
+            raw_err = pe.get("error") or "AST parse error"
+            clean_err = convert_ansi_to_carets(raw_err)
+            
+            print(f"  - {get_label(pe)}:")
+            for err_line in clean_err.splitlines():
+                print(f"    {err_line}")
+            print()
+        print("=" * 70 + "\n")
+
     if result.get("violations"):
         print("=== STRUCTURED VIOLATIONS (RULE-001) ===")
-        print(json.dumps(result["violations"], indent=2))
+        for v in result["violations"]:
+            print(f"  - {get_label(v)}: [{v.get('rule_id')}] Keyword '{v.get('current')}' must be uppercase ('{v.get('expected')}')")
         print("\n" + "=" * 70 + "\n")
 
 
 
-    print("=== LLM REVIEW OUTPUT ===")
-    print(result.get("llm_review"))
-    print("\n" + "=" * 70)
+    llm_review = result.get("llm_review")
+    if llm_review:
+        print("=== LLM REVIEW OUTPUT ===")
+        for lr in llm_review:
+            print(f"  - {get_label(lr)}: {lr.get('body')}")
+        print("\n" + "=" * 70)
 
 
 if __name__ == "__main__":

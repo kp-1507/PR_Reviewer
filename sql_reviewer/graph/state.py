@@ -10,5 +10,5 @@ class ReviewState(TypedDict):
     ast_results: List[Dict[str, Any]]
     violations: List[Dict[str, Any]]
     context: str
-    llm_review: str
+    llm_review: List[Dict[str, Any]]
     final_result: Dict[str, Any]
