@@ -49,30 +49,37 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
         print("Could not resolve merge base SHA. Aborting review.")
         return
 
-    # Step 2: Fetch changed files
-    # If synchronize event, compare before_sha...head_sha to review ONLY files touched in this push
-    files = []
+    # Step 2: Fetch the official list of changed files in this PR (against main)
+    pr_files_url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files"
+    pr_response = requests.get(pr_files_url, headers=headers)
+    print("GitHub PR Files API Status:", pr_response.status_code)
+
+    if pr_response.status_code != 200:
+        print("Error fetching PR files:", pr_response.json())
+        return
+
+    pr_files = pr_response.json()
+    files_to_review = pr_files
+
+    # If this is an incremental update (synchronize) and before_sha is available,
+    # filter to ONLY the files that were modified in this specific push AND are part of this PR.
     if before_sha:
-        print(f"🔍 Incremental push detected! Comparing {before_sha[:8]}...{head_sha[:8]} for changed files...")
+        print(f"🔍 Incremental push detected! Comparing {before_sha[:8]}...{head_sha[:8]}...")
         compare_url = f"https://api.github.com/repos/{owner}/{repo_name}/compare/{before_sha}...{head_sha}"
         compare_response = requests.get(compare_url, headers=headers)
         if compare_response.status_code == 200:
-            files = compare_response.json().get("files", [])
-            print(f"📦 Files modified in this push ({len(files)}): {[f.get('filename') for f in files]}")
+            push_files = compare_response.json().get("files", [])
+            push_filenames = {f.get("filename") for f in push_files if f.get("filename")}
+            print(f"📦 Files touched in this push ({len(push_filenames)}): {push_filenames}")
+            
+            # INTERSECT: Only review files that are in the PR's net diff AND touched in this push
+            # This discards files merged in from main (like cust7.ipynb) that are not part of the PR's changes!
+            files_to_review = [f for f in pr_files if f.get("filename") in push_filenames]
+            print(f"🎯 Filtered PR files to review ({len(files_to_review)}): {[f.get('filename') for f in files_to_review]}")
         else:
-            print(f"⚠️ Compare API returned {compare_response.status_code}, falling back to full PR files list.")
+            print(f"⚠️ Compare API returned {compare_response.status_code}, reviewing all PR files.")
 
-    # Initial PR open or fallback: fetch full list of changed files in this PR
-    if not files:
-        url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files"
-        response = requests.get(url, headers=headers)
-        print("GitHub PR Files API Status:", response.status_code)
-
-        if response.status_code != 200:
-            print("Error fetching PR files:", response.json())
-            return
-
-        files = response.json()
+    files = files_to_review
 
     from code_store import get_stored_file, save_file
     from patch_utility import apply_patch
@@ -286,6 +293,8 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
         base_sha = payload["pull_request"]["base"]["sha"]
         before_sha = payload.get("before") if action == "synchronize" else None
 
+        print("PR opened/updated! Scheduling review...")
+        background_tasks.add_task(process_pr_review, owner, repo_name, pr_number, head_sha, base_sha)
         print(f"PR {action}! Scheduling review (before_sha: {before_sha[:8] if before_sha else 'None'})...")
         background_tasks.add_task(process_pr_review, owner, repo_name, pr_number, head_sha, base_sha, before_sha)
         return {"status": "received", "message": "Review processing in background"}
