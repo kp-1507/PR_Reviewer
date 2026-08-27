@@ -293,8 +293,6 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
         base_sha = payload["pull_request"]["base"]["sha"]
         before_sha = payload.get("before") if action == "synchronize" else None
 
-        print("PR opened/updated! Scheduling review...")
-        background_tasks.add_task(process_pr_review, owner, repo_name, pr_number, head_sha, base_sha)
         print(f"PR {action}! Scheduling review (before_sha: {before_sha[:8] if before_sha else 'None'})...")
         background_tasks.add_task(process_pr_review, owner, repo_name, pr_number, head_sha, base_sha, before_sha)
         return {"status": "received", "message": "Review processing in background"}
