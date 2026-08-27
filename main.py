@@ -180,6 +180,13 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
                 print(f"{unit_label}: {review_result.get('total_sql_cells')} | AST Errors: {review_result.get('total_ast_parse_errors')} | Rule Violations: {review_result.get('total_violations')}")
                 print("==================================================")
 
+                parse_errors = review_result.get("parse_errors", [])
+                if parse_errors:
+                    print("\n❌ SYNTAX / AST PARSE ERRORS (LLM Review Bypassed):")
+                    for err in parse_errors:
+                        cell_label = f"Line {err.get('cell_id')}" if filename.endswith(".py") else f"Cell #{err.get('cell_id')}"
+                        print(f"  • {cell_label}: {err.get('error')}")
+
                 violations = review_result.get("violations", [])
                 if violations:
                     print("\n🔴 DETERMINISTIC KEYWORD & AST VIOLATIONS:")
@@ -191,14 +198,28 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
                         print(f"  • {cell_label}: [{v.get('rule_id')}] Keyword '{v.get('current')}' must be uppercase ('{v.get('expected')}')")
 
                 llm_review = review_result.get("llm_review")
-                if llm_review:
+                if not parse_errors and llm_review:
                     print("\n🔍 SEMANTIC & PERFORMANCE FINDINGS (LLM):")
                     print(llm_review)
+                elif parse_errors:
+                    print("\n⛔ LLM review was BYPASSED due to syntax errors.")
 
-                    # Post review comment to GitHub PR
+                # Post review comment to GitHub PR
+                review_body = ""
+                if parse_errors:
+                    review_body = f"### ❌ SQL Syntax Error Report for `{filename}`\n\n"
+                    review_body += "⚠️ **The SQL query contains syntax errors and cannot be parsed or executed:**\n\n"
+                    for err in parse_errors:
+                        cell_label = f"Line {err.get('cell_id')}" if filename.endswith(".py") else f"Cell #{err.get('cell_id')}"
+                        review_body += f"- **{cell_label}**: `{err.get('error')}`\n"
+                    review_body += "\n*LLM semantic review was bypassed to save tokens. Please fix SQL syntax errors first.*"
+                elif llm_review:
+                    review_body = f"### 📊 SQL Code Review Report for `{filename}`\n\n{llm_review}"
+
+                if review_body:
                     review_url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
                     review_payload = {
-                        "body": f"### 📊 SQL Code Review Report for `{filename}`\n\n{llm_review}",
+                        "body": review_body,
                         "event": "COMMENT"
                     }
                     post_response = requests.post(review_url, headers=headers, json=review_payload)
