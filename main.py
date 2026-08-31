@@ -61,9 +61,9 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
     pr_files = pr_response.json()
     files_to_review = pr_files
 
-    # If this is an incremental update (synchronize) and before_sha is available,
+    # If this is an incremental update (synchronize) and before_sha is valid,
     # filter to ONLY the files that were modified in this specific push AND are part of this PR.
-    if before_sha:
+    if before_sha and not before_sha.startswith("0000000"):
         print(f"🔍 Incremental push detected! Comparing {before_sha[:8]}...{head_sha[:8]}...")
         compare_url = f"https://api.github.com/repos/{owner}/{repo_name}/compare/{before_sha}...{head_sha}"
         compare_response = requests.get(compare_url, headers=headers)
@@ -73,36 +73,44 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
             print(f"📦 Files touched in this push ({len(push_filenames)}): {push_filenames}")
             
             # INTERSECT: Only review files that are in the PR's net diff AND touched in this push
-            # This discards files merged in from main (like cust7.ipynb) that are not part of the PR's changes!
-            files_to_review = [f for f in pr_files if f.get("filename") in push_filenames]
-            print(f"🎯 Filtered PR files to review ({len(files_to_review)}): {[f.get('filename') for f in files_to_review]}")
+            filtered = [f for f in pr_files if f.get("filename") in push_filenames]
+            if filtered:
+                files_to_review = filtered
+                print(f"🎯 Filtered PR files to review ({len(files_to_review)}): {[f.get('filename') for f in files_to_review]}")
+            else:
+                print("ℹ️ Incremental filter returned 0 matching files. Falling back to all modified PR files.")
+                files_to_review = pr_files
         else:
             print(f"⚠️ Compare API returned {compare_response.status_code}, reviewing all PR files.")
 
     files = files_to_review
+    print(f"📋 Total {len(files)} file(s) queued for processing: {[f.get('filename') for f in files]}")
 
     from code_store import get_stored_file, save_file
     from patch_utility import apply_patch
 
     repo_full_name = f"{owner}/{repo_name}"
+    reviewed_count = 0
 
     for file in files:
-        filename = file["filename"]
+        filename = file.get("filename", "")
         if not filename.endswith((".ipynb", ".py")):
+            print(f"⏭️ Skipping non-supported file: {filename}")
             continue
 
         # Skip deleted files — nothing to review
         status = file.get("status")
         if status == "removed":
-            print(f"⏭️ Skipping deleted file {filename}")
+            print(f"⏭️ Skipping deleted file: {filename}")
             continue
 
-        # Skip files with no actual code changes (e.g. files touched during merge conflict resolution)
+        # Skip files with no actual code changes
         patch = file.get("patch", "")
         if not patch or not patch.strip():
             print(f"⏭️ Skipping {filename} — no diff/patch (unchanged or binary)")
             continue
 
+        reviewed_count += 1
         print("--------------------------------------------------")
         print("File:", filename)
         print("Patch:\n", patch)
@@ -248,6 +256,10 @@ def process_pr_review(owner: str, repo_name: str, pr_number: int, head_sha: str,
                 print("\n==================================================\n")
             except Exception as e:
                 print(f"Error parsing or reviewing file {filename}: {e}")
+
+    if reviewed_count == 0:
+        print("ℹ️ No eligible Python or Notebook files had code modifications to review in this PR/push.")
+        print("==================================================\n")
 
 
 
